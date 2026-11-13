@@ -17,6 +17,11 @@ const THEMES: Record<string, Record<string, string>> = {
   amber:   { accent: '#fbbf24', value: '#fcd34d', dim: '#78716c', warn: '#fb923c', bad: '#f87171', head: '#67e8f9', code: '#f472b6', bold: '#86efac' },
   magenta: { accent: '#e879f9', value: '#a78bfa', dim: '#6b7280', warn: '#fbbf24', bad: '#f87171', head: '#67e8f9', code: '#fbbf24', bold: '#86efac' },
   mono:    { accent: '#e5e7eb', value: '#9ca3af', dim: '#6b7280', warn: '#d1d5db', bad: '#f87171', head: '#ffffff', code: '#d1d5db', bold: '#ffffff' },
+  nord:    { accent: '#88c0d0', value: '#d8dee9', dim: '#6b7a90', warn: '#ebcb8b', bad: '#bf616a', head: '#81a1c1', code: '#a3be8c', bold: '#b48ead' },
+  gruvbox: { accent: '#fabd2f', value: '#ebdbb2', dim: '#928374', warn: '#fe8019', bad: '#fb4934', head: '#b8bb26', code: '#d3869b', bold: '#83a598' },
+  solarized: { accent: '#268bd2', value: '#93a1a1', dim: '#657b83', warn: '#b58900', bad: '#dc322f', head: '#2aa198', code: '#cb4b16', bold: '#859900' },
+  dracula: { accent: '#bd93f9', value: '#f8f8f2', dim: '#6272a4', warn: '#f1fa8c', bad: '#ff5555', head: '#ff79c6', code: '#50fa7b', bold: '#8be9fd' },
+  tokyo:   { accent: '#7aa2f7', value: '#c0caf5', dim: '#565f89', warn: '#e0af68', bad: '#f7768e', head: '#bb9af7', code: '#9ece6a', bold: '#7dcfff' },
 }
 const DEFAULT = 'cyan'
 
@@ -32,14 +37,33 @@ const loadTheme = async ($: any) => {
   }
 }
 
+// How long each call took, by tool_use_id, for the card under its row.
+const took = new Map<string, number>()
+
+const lines = (text: unknown): number => (typeof text === 'string' && text !== '' ? text.split('\n').length : 0)
+
+// What a call changed, as '+3 −1'; empty for tools that change no file.
+const delta = (tool: string, input: unknown): { add: number; del: number } | null => {
+  const i = (input ?? {}) as Record<string, unknown>
+  if (tool === 'Edit') return { add: lines(i.new_string), del: lines(i.old_string) }
+  if (tool === 'Write') return { add: lines(i.content), del: 0 }
+  if (tool === 'MultiEdit' && Array.isArray(i.edits)) {
+    return i.edits.reduce((n: { add: number; del: number }, x: any) => ({ add: n.add + lines(x?.new_string), del: n.del + lines(x?.old_string) }), { add: 0, del: 0 })
+  }
+
+  return null
+}
+
+const took2 = (ms: number): string => (ms >= 60000 ? `${(ms / 60000).toFixed(1)}m` : ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.round(ms)}ms`)
+
 const listing = (current: string) =>
-  ['themes:', ...Object.keys(THEMES).map(n => `  ${n === current ? '*' : ' '} ${n}`), 'usage: /skin <name>'].join('\n')
+  ['themes:', ...Object.keys(THEMES).map(n => `  ${n === current ? '*' : ' '} ${n}`), 'usage: /skin <name> · /skin random'].join('\n')
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'skin', // /theme is built into Claude Code, so this one is /skin
-      description: 'Switch the nerd color theme (cyan, amber, magenta, mono)',
+      description: 'Switch the nerd color theme (cyan, amber, magenta, mono, nord, gruvbox, solarized, dracula, tokyo) or /skin random',
     })
 
     return next(e)
@@ -47,7 +71,9 @@ export const register: Register = on => {
 
   on('command.run', { command: 'skin' }, async ($, e) => {
     const current = (await loadTheme($)).name
-    const want = e.args.trim().toLowerCase()
+    const asked = e.args.trim().toLowerCase()
+    const others = Object.keys(THEMES).filter(n => n !== current)
+    const want = asked === 'random' ? (others[Math.floor(Math.random() * others.length)] ?? current) : asked
 
     if (want === '' || !THEMES[want]) {
       return { text: (want === '' ? '' : `unknown theme "${want}"\n`) + listing(current) }
@@ -57,6 +83,19 @@ export const register: Register = on => {
     $.ui.toast(`theme: ${want}`)
 
     return { text: `theme set to ${want}. mods pick it up on their next redraw; the status line on its next refresh.` }
+  })
+
+  // Time every call so its row can show how long it took.
+  on('tool.call', async ($, e, next) => {
+    const id = (e as any).tool_use_id as string | undefined
+    const t0 = await $.clock.now()
+    const ran = await next(e)
+    if (id) {
+      took.set(id, (await $.clock.now()) - t0)
+      if (took.size > 300) took.delete(took.keys().next().value as string)
+    }
+
+    return ran
   })
 
   // Color-code every tool row by status: running / ok / failed / interrupted.
@@ -71,10 +110,27 @@ export const register: Register = on => {
           ? t.warn
           : t.value
 
+    // A card line under a finished call: how long it took and what it changed.
+    const ms = took.get(e.props.tool_use_id)
+    const d = delta(e.props.tool, e.props.input)
+    const slow = ms !== undefined && ms >= 1000
+    const card = !e.props.isRunning && !e.props.isInterrupted && (slow || (d !== null && d.add + d.del > 0))
+
     return (
       <Box>
         <Text color={color}>{MARK.bar}</Text>
-        <Box flexDirection="column">{await next(e)}</Box>
+        <Box flexDirection="column">
+          {await next(e)}
+          {card && (
+            <Text>
+              <Text color={t.dim}>{'└ '}</Text>
+              {slow && <Text color={(ms ?? 0) >= 10000 ? t.warn : t.dim}>{took2(ms ?? 0)}</Text>}
+              {slow && d !== null && d.add + d.del > 0 && <Text color={t.dim}>{' · '}</Text>}
+              {d !== null && d.add + d.del > 0 && <Text color={t.value}>{`+${d.add}`}</Text>}
+              {d !== null && d.del > 0 && <Text color={t.bad}>{` −${d.del}`}</Text>}
+            </Text>
+          )}
+        </Box>
       </Box>
     )
   })

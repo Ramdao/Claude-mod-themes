@@ -1,9 +1,10 @@
 import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
-import type { ToolCount, TurnStat } from '../types'
+import type { Alerts, Mark, ToolCount, TurnStat } from '../types'
 
 const PANE = 'tool-histogram'
+const HISTORY_PANE = 'nerd-history'
 
 // ---- tweak me -------------------------------------------------------------
 const STYLE = {
@@ -13,6 +14,9 @@ const STYLE = {
   maxTurns: 40, // turns kept for sparklines
   spark: '▁▂▃▄▅▆▇█',
   pie: 20, // pie diameter in columns (rows = half of it)
+  slowMs: 15000, // a tool running longer than this shows in the status line
+  heatRows: 5, // tools in the activity heatmap
+  heat: ' ░▒▓█',
 }
 // The shared theme file lives in the Claude config dir (CLAUDE_CONFIG_DIR, else ~/.claude).
 const themeFile = async ($: any): Promise<string> => {
@@ -36,6 +40,8 @@ const loadTheme = async ($: any) => {
 const counts = atom({ plugin: 'tool-histogram', key: 'counts' } as const, [], { shape: 'counts-2' })
 const turns = atom({ plugin: 'tool-histogram', key: 'turns' } as const, [], { shape: 'turns-1' })
 const durations = atom({ plugin: 'tool-histogram', key: 'durations' } as const, [], { shape: 'durations-1' })
+const alerts = atom({ plugin: 'tool-histogram', key: 'alerts' } as const, { b80: false, b100: false, c70: false, c85: false }, { shape: 'alerts-1' })
+const marks = atom({ plugin: 'tool-histogram', key: 'marks' } as const, [], { shape: 'marks-1' })
 
 // Tool-duration histogram buckets (upper bound in ms, label).
 const BUCKETS: [number, string][] = [
@@ -150,29 +156,238 @@ const k = (n: number): string => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1
 const dur = (ms: number): string => (ms >= 60000 ? `${(ms / 60000).toFixed(1)}m` : ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.round(ms)}ms`)
 const pct = (n: number, of: number): string => `${of > 0 ? Math.round((n / of) * 100) : 0}%`.padStart(4)
 
+// ---- budget, alerts, history ---------------------------------------------
+type Budget = { usd: number | null; deny: boolean }
+
+const getBudget = async ($: any): Promise<Budget> => {
+  const v = (await $.store.get('budget')) as Partial<Budget> | undefined
+
+  return { usd: typeof v?.usd === 'number' && v.usd > 0 ? v.usd : null, deny: v?.deny === true }
+}
+
+const usageOf = async ($: any): Promise<any | null> => {
+  try {
+    return await $.session.usage()
+  } catch {
+    return null
+  }
+}
+
+const ctxPct = (u: any): number => {
+  const c = u?.context
+  if (!c) return 0
+
+  return c.percent ?? (c.tokens !== undefined && c.window ? (c.tokens / c.window) * 100 : 0)
+}
+
+const money = (n: number): string => `$${n.toFixed(2)}`
+
+// Toast once as spend and context cross their limits; reset when they fall back.
+const watch = async ($: any) => {
+  const u = await usageOf($)
+  if (!u) return
+  const b = await getBudget($)
+  const cost: number = u.cost?.usd ?? 0
+  const bf = b.usd ? cost / b.usd : 0
+  const cp = ctxPct(u)
+  const say: string[] = []
+  await update($, alerts, (a: Alerts) => {
+    say.length = 0
+    const n = { ...a }
+    if (bf >= 1 && !a.b100) {
+      n.b100 = n.b80 = true
+      say.push(`⛔ budget reached: ${money(cost)} of ${money(b.usd ?? 0)}${b.deny ? ' · new tool calls are blocked' : ''}`)
+    } else if (bf >= 0.8 && !a.b80) {
+      n.b80 = true
+      say.push(`⚠ 80% of budget used: ${money(cost)} of ${money(b.usd ?? 0)}`)
+    }
+    if (cp >= 85 && !a.c85) {
+      n.c85 = n.c70 = true
+      say.push(`⚠ context ${Math.round(cp)}% full · consider /compact`)
+    } else if (cp >= 70 && !a.c70) {
+      n.c70 = true
+      say.push(`context ${Math.round(cp)}% full`)
+    }
+    if (cp < 50) n.c70 = n.c85 = false
+
+    return n
+  })
+  for (const m of say) $.ui.toast(m, { timeoutMs: 7000 })
+}
+
+type Session = { id: number; at: number; cost: number; turns: number; tools: number; failed: number; out: number; top: [string, number][] }
+const HISTORY_KEEP = 30
+
+// One row per session, keyed by when it began; rewritten as the session goes on.
+const saveHistory = async ($: any) => {
+  const u = await usageOf($)
+  if (!u) return
+  const cs = [...(await read($, counts))].sort((a, b) => b.count - a.count)
+  const ts = [...(await read($, turns))]
+  const tools = cs.reduce((n, c) => n + c.count, 0)
+  if (tools === 0 && ts.length === 0) return
+  const rec: Session = {
+    id: u.startedAt,
+    at: await $.clock.now(),
+    cost: u.cost?.usd ?? 0,
+    turns: ts.length,
+    tools,
+    failed: cs.reduce((n, c) => n + c.failed, 0),
+    out: ts.reduce((n, x) => n + x.outTok, 0),
+    top: cs.slice(0, 5).map(c => [c.tool, c.count]),
+  }
+  const old = ((await $.store.get('history')) as Session[] | undefined) ?? []
+  await $.store.set('history', [...old.filter(s => s.id !== rec.id), rec].sort((a, b) => a.id - b.id).slice(-HISTORY_KEEP))
+}
+
+const stamp = (ms: number): string => {
+  const d = new Date(ms)
+  const p = (n: number) => String(n).padStart(2, '0')
+
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+}
+
+// The session's numbers as markdown or JSON, for a standup or a PR.
+const exportText = async ($: any, kind: 'md' | 'json'): Promise<string> => {
+  const u = await usageOf($)
+  const cs = [...(await read($, counts))].sort((a, b) => b.count - a.count)
+  const ts = [...(await read($, turns))]
+  const durs = [...(await read($, durations))]
+  const total = cs.reduce((n, c) => n + c.count, 0)
+  const failed = cs.reduce((n, c) => n + c.failed, 0)
+  const sum = (f: (x: TurnStat) => number) => ts.reduce((n, x) => n + f(x), 0)
+  const hist = BUCKETS.map(([hi, name], i) => {
+    const lo = i === 0 ? 0 : (BUCKETS[i - 1]?.[0] ?? 0)
+
+    return { bucket: name, calls: durs.filter(d => d >= lo && d < hi).length }
+  })
+  const cost: number = u?.cost?.usd ?? 0
+  const when = stamp(await $.clock.now())
+  if (kind === 'json') {
+    return JSON.stringify(
+      {
+        generated: when,
+        cost,
+        contextPercent: Math.round(ctxPct(u)),
+        turns: ts.length,
+        tools: cs.map(c => ({ tool: c.tool, calls: c.count, failed: c.failed, avgMs: Math.round(c.totalMs / c.count), maxMs: c.maxMs })),
+        durationHistogram: hist,
+        tokens: { in: sum(x => x.inTok), out: sum(x => x.outTok), cacheRead: sum(x => x.cacheRead), cacheWrite: sum(x => x.cacheWrite) },
+        perTurn: ts.map(x => ({ outTokens: x.outTok, ms: x.ms })),
+      },
+      null,
+      2,
+    )
+  }
+  const rows = cs.map(c => `| ${c.tool} | ${c.count} | ${c.failed} | ${dur(c.totalMs / c.count)} | ${dur(c.maxMs)} | ${pct(c.count, total).trim()} |`)
+
+  return [
+    `# nerd stats · ${when}`,
+    '',
+    `- cost **${money(cost)}** · turns **${ts.length}** · tool calls **${total}**${failed > 0 ? ` (${failed} failed)` : ''} · context ${Math.round(ctxPct(u))}%`,
+    `- tokens: in ${k(sum(x => x.inTok))} · out ${k(sum(x => x.outTok))} · cache read ${k(sum(x => x.cacheRead))} / write ${k(sum(x => x.cacheWrite))}`,
+    '',
+    '## Tools',
+    '',
+    '| tool | calls | failed | avg | max | share |',
+    '| --- | ---: | ---: | ---: | ---: | ---: |',
+    ...rows,
+    '',
+    '## Tool duration',
+    '',
+    '| bucket | calls |',
+    '| --- | ---: |',
+    ...hist.map(h => `| ${h.bucket} | ${h.calls} |`),
+    '',
+  ].join('\n')
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'nerd',
-      description: 'Open a pane with session stats and graphs',
+      description: 'Session stats pane. /nerd history · /nerd export [md|json]',
+    })
+    await $.command.register({
+      name: 'budget',
+      description: 'Spend limit: /budget 5 · /budget off · /budget deny on|off',
     })
 
     return next(e)
   })
 
-  on('command.run', { command: 'nerd' }, async $ => {
+  on('command.run', { command: 'nerd' }, async ($, e) => {
+    const [sub = '', arg = ''] = e.args.trim().toLowerCase().split(/\s+/)
+    if (sub === 'history') {
+      await saveHistory($)
+      await $.ui.open({ id: HISTORY_PANE, title: 'nerd history' })
+
+      return { text: 'nerd history pane opened.' }
+    }
+    if (sub === 'export') {
+      const kind = arg === 'json' ? 'json' : 'md'
+      const name = `nerd-stats-${stamp(await $.clock.now()).replace(/[: ]/g, '-')}.${kind}`
+      await $.fs.write(name, await exportText($, kind))
+
+      return { text: `stats written to ${name} (in the working directory)` }
+    }
     await $.ui.open({ id: PANE, title: 'nerd stats' })
 
     return { text: 'nerd stats pane opened.' }
   })
 
+  on('command.run', { command: 'budget' }, async ($, e) => {
+    const a = e.args.trim().toLowerCase()
+    const b = await getBudget($)
+    const show = (x: Budget) => (x.usd ? `budget ${money(x.usd)}` : 'no budget set') + ` · blocking ${x.deny ? 'on' : 'off'}`
+    const save = async (x: Budget) => {
+      await $.store.set('budget', x)
+      await update($, alerts, (al: Alerts) => ({ ...al, b80: false, b100: false }))
+
+      return { text: show(x) }
+    }
+    if (a === '') return { text: show(b) + '\n/budget <usd> · /budget off · /budget deny on|off' }
+    if (a === 'off') return save({ ...b, usd: null })
+    if (a.startsWith('deny')) return save({ ...b, deny: /\b(on|true|1|yes)\b/.test(a) })
+    const n = parseFloat(a.replace('$', ''))
+
+    return Number.isFinite(n) && n > 0 ? save({ ...b, usd: n }) : { text: `"${a}" is not an amount. try /budget 5` }
+  })
+
+  on('session.end', async ($, e, next) => {
+    await saveHistory($)
+
+    return next(e)
+  })
+
   on('tool.call', async ($, e, next) => {
+    const b = await getBudget($)
+    if (b.deny && b.usd) {
+      const spent: number = (await usageOf($))?.cost?.usd ?? 0
+      if (spent >= b.usd) {
+        return { deny: `nerd budget: ${money(spent)} of ${money(b.usd)} spent. /budget <usd> raises it, /budget deny off stops blocking.` }
+      }
+    }
     const t0 = await $.clock.now()
+    // A call that runs long shows a live timer in the status line.
+    let every: { cancel: () => void } | undefined
+    let shown = false
+    const late = $.clock.after(STYLE.slowMs, () => {
+      shown = true
+      every = $.clock.every(1000, async () => {
+        $.ui.status(`⏱ ${clip(e.tool, 28)} running ${Math.round(((await $.clock.now()) - t0) / 1000)}s`)
+      })
+    })
     const ran = await next(e)
+    late.cancel()
+    every?.cancel()
+    if (shown) $.ui.status(undefined)
     const ms = (await $.clock.now()) - t0
     const isFail = ran.deny !== undefined || ran.isError === true
     await update($, counts, list => bump(list, e.tool, isFail, ms))
     await update($, durations, list => [...list, ms].slice(-500))
+    await update($, marks, (list: Mark[]) => [...list, { t: t0, tool: e.tool }].slice(-600))
+    await watch($)
 
     return ran
   })
@@ -189,6 +404,8 @@ export const register: Register = on => {
       }
       await update($, turns, list => [...list, row].slice(-STYLE.maxTurns))
     }
+    await watch($)
+    await saveHistory($)
 
     return next(e)
   })
@@ -212,7 +429,7 @@ export const register: Register = on => {
     })
     const histPeak = Math.max(1, ...hist.map(b => b.n))
     // Column chart: fast = green, slow = red; widths fit the pane.
-    const colW = Math.max(5, Math.min(8, Math.floor((W - 2) / hist.length) - COL_GAP))
+    const colW = Math.max(6, Math.min(8, Math.floor((W - 2) / hist.length) - COL_GAP))
     const speed = [t.value, t.accent, t.warn, '#fb923c', t.bad]
     const list = [...(await read($, counts))].sort((a, b) => b.count - a.count)
     const ts = [...(await read($, turns))]
@@ -280,6 +497,33 @@ export const register: Register = on => {
     if (rest > 0) share.push({ name: 'other', n: rest, color: palette[5] ?? t.dim })
     const shareLabel = Math.max(6, Math.min(14, W - 33, Math.max(4, ...share.map(s => s.name.length))))
     const rows = total > 0 ? pieRows(share.map(s => ({ frac: s.n / total, color: s.color })), STYLE.pie) : []
+    const budget = await getBudget($)
+    const spent: number = usage.cost?.usd ?? 0
+    const budgetFrac = budget.usd ? spent / budget.usd : 0
+    const budgetColor = budgetFrac >= 1 ? t.bad : budgetFrac >= 0.8 ? t.warn : t.value
+
+    // Activity heatmap: when each of the top tools ran, across the session so far.
+    const mk = [...(await read($, marks))]
+    const nowMs = await $.clock.now()
+    const heatLabel = Math.min(10, label)
+    const heatCols = Math.max(12, Math.min(40, W - heatLabel - 3))
+    const heatStart = mk[0]?.t ?? nowMs
+    const heatSpan = Math.max(60000, nowMs - heatStart)
+    const heatRows = top.slice(0, STYLE.heatRows).map((c, i) => {
+      const cells = new Array<number>(heatCols).fill(0)
+      for (const m of mk) {
+        if (m.tool === c.tool) {
+          const at = Math.min(heatCols - 1, Math.floor(((m.t - heatStart) / heatSpan) * heatCols))
+          cells[at] = (cells[at] ?? 0) + 1
+        }
+      }
+
+      return { name: c.tool, color: palette[i] ?? t.dim, cells }
+    })
+    const heatPeak = Math.max(1, ...heatRows.flatMap(r => r.cells))
+    const heatChar = (n: number): string =>
+      n === 0 ? '·' : (STYLE.heat[Math.min(STYLE.heat.length - 1, Math.max(1, Math.ceil((n / heatPeak) * (STYLE.heat.length - 1))))] ?? '█')
+
     const runProps = (r: Run) => ({ ...(r.fg ? { color: r.fg } : {}), ...(r.bg ? { backgroundColor: r.bg } : {}) })
 
     return (
@@ -299,6 +543,14 @@ export const register: Register = on => {
           <Text color={ctxColor}>{gauge(ctxFrac)}</Text>
           <Text dimColor>{` ${Math.round(ctxFrac * 100)}%  ${ctx.tokens !== undefined ? k(ctx.tokens) : '?'}/${k(ctx.window)}`}</Text>
         </Text>
+
+        {budget.usd !== null && (
+          <Text>
+            <Text color={t.value}>budget </Text>
+            <Text color={budgetColor}>{gauge(budgetFrac)}</Text>
+            <Text dimColor>{` ${Math.round(budgetFrac * 100)}%  ${money(spent)}/${money(budget.usd)}${budget.deny ? '  blocking' : ''}`}</Text>
+          </Text>
+        )}
 
         <Text> </Text>
         {heading('tools')}
@@ -351,6 +603,22 @@ export const register: Register = on => {
                 </Text>
               ))}
             </Box>
+          </Box>
+        )}
+
+        <Text> </Text>
+        {heading('activity')}
+        {mk.length === 0 ? (
+          <Text dimColor>(null) no exec yet</Text>
+        ) : (
+          <Box flexDirection="column">
+            {heatRows.map(r => (
+              <Text>
+                <Text color={r.color}>{clip(r.name, heatLabel).padEnd(heatLabel)} </Text>
+                <Text color={r.color}>{r.cells.map(heatChar).join('')}</Text>
+              </Text>
+            ))}
+            <Text dimColor>{`${''.padEnd(heatLabel)} -${dur(heatSpan)}${' '.repeat(Math.max(1, heatCols - dur(heatSpan).length - 4))}now`}</Text>
           </Box>
         )}
 
@@ -432,6 +700,71 @@ export const register: Register = on => {
 
         <Text> </Text>
         <Text dimColor>{`Σ ${total} exec · ${list.length} bin · exit 0`}</Text>
+      </Box>
+    )
+  })
+
+  // /nerd history: one row per past session, kept between sessions in $.store.
+  on('ui.render', { component: 'Pane', requestId: HISTORY_PANE }, async ($, e) => {
+    const { Box, Text } = $.ui.resolve(e) as any
+    const t = await loadTheme($)
+    const W: number = Math.max(36, Math.min(64, (e as any).props?.bodyColumns ?? 48))
+    const list = ((await $.store.get('history')) as Session[] | undefined) ?? []
+    const rows = list.slice(-14).reverse()
+    const heading = (title: string) => (
+      <Text>
+        <Text color={t.accent}>{`── ${title} `}</Text>
+        <Text color={t.dim}>{'─'.repeat(Math.max(2, W - title.length - 4))}</Text>
+      </Text>
+    )
+
+    if (list.length === 0) {
+      return (
+        <Box flexDirection="column">
+          <Text color={t.accent}>$ nerd --history</Text>
+          <Text dimColor>(null) no sessions saved yet. they save as you work.</Text>
+        </Box>
+      )
+    }
+
+    const peak = Math.max(0.01, ...rows.map(s => s.cost))
+    const totalCost = list.reduce((n, s) => n + s.cost, 0)
+    const totalTools = list.reduce((n, s) => n + s.tools, 0)
+    const byTool = new Map<string, number>()
+    for (const s of list) for (const [name, n] of s.top) byTool.set(name, (byTool.get(name) ?? 0) + n)
+    const best = [...byTool.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3)
+    const barMax = Math.max(6, Math.min(16, W - 40))
+
+    return (
+      <Box flexDirection="column">
+        <Text color={t.accent}>$ nerd --history</Text>
+        {heading(`last ${rows.length} sessions`)}
+        <Text dimColor>{`${'when'.padEnd(11)} ${'cost'.padStart(7)}  ${'turns'.padStart(5)} ${'tools'.padStart(5)}  spend`}</Text>
+        {rows.map(s => (
+          <Text>
+            <Text color={t.value}>{stamp(s.id).padEnd(11)} </Text>
+            <Text>{money(s.cost).padStart(7)}</Text>
+            <Text dimColor>{`  ${String(s.turns).padStart(5)} ${String(s.tools).padStart(5)}  `}</Text>
+            <Text color={s.failed > 0 ? t.warn : t.accent}>{'█'.repeat(Math.max(1, Math.round((s.cost / peak) * barMax)))}</Text>
+            {s.failed > 0 && <Text color={t.bad}>{` ✗${s.failed}`}</Text>}
+          </Text>
+        ))}
+
+        <Text> </Text>
+        {heading('totals')}
+        <Text>
+          <Text color={t.value}>cost </Text>
+          <Text>{money(totalCost)}</Text>
+          <Text dimColor>{`   avg ${money(totalCost / list.length)}/session   ${list.length} sessions   ${totalTools} tool calls`}</Text>
+        </Text>
+        {best.map(([name, n]) => (
+          <Text>
+            <Text color={t.value}>{clip(name, 14).padEnd(14)} </Text>
+            <Text dimColor>{`${n} calls · ${pct(n, totalTools).trim()}`}</Text>
+          </Text>
+        ))}
+        <Text> </Text>
+        <Text dimColor>{`Σ ${list.length} sessions kept (max ${HISTORY_KEEP}) · exit 0`}</Text>
       </Box>
     )
   })

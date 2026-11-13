@@ -3,6 +3,8 @@ export type Stats = {
   turns: number
   tools: number
   lastSeconds: number | null
+  recent: number[] // seconds of the last turns
+  byTool: Record<string, number> // calls per tool
 }
 
 declare module 'claude-code' {

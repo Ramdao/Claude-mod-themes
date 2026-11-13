@@ -1,5 +1,12 @@
 {
   "name": "nerd-theme",
-  "version": "0.1.0",
-  "description": "/skin switches the color scheme of every nerd mod and the status line; also color-codes tool rows by status."
+  "version": "0.2.0",
+  "description": "/skin switches the color scheme (cyan, amber, magenta, mono, nord, gruvbox, solarized, dracula, tokyo, or random) of every nerd mod; also color-codes tool rows by status and adds a duration and +/- card under them.",
+  "author": {
+    "name": "Ramdao",
+    "url": "https://github.com/Ramdao"
+  },
+  "homepage": "https://github.com/Ramdao/Claude-mod-themes",
+  "repository": "https://github.com/Ramdao/Claude-mod-themes",
+  "license": "MIT"
 }

@@ -2,5 +2,12 @@
   "name": "file-tracker",
   "version": "0.1.0",
   "description": "/files opens a pane listing every file Claude edited or wrote this session, with edit counts.",
+  "author": {
+    "name": "Ramdao",
+    "url": "https://github.com/Ramdao"
+  },
+  "homepage": "https://github.com/Ramdao/Claude-mod-themes",
+  "repository": "https://github.com/Ramdao/Claude-mod-themes",
+  "license": "MIT",
   "types": "./types/index.d.ts"
 }

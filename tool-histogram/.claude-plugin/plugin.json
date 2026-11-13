@@ -1,6 +1,13 @@
 {
   "name": "tool-histogram",
-  "version": "0.1.0",
-  "description": "/nerd opens a stats pane: tool usage bars, a text pie of tool share, tool-duration columns, token and per-turn trend charts.",
+  "version": "0.2.0",
+  "description": "/nerd opens a stats pane (tool bars, text pie, activity heatmap, duration columns, token and per-turn charts); /nerd history, /nerd export, and /budget add history, reports and a spend limit with context and slow-tool warnings.",
+  "author": {
+    "name": "Ramdao",
+    "url": "https://github.com/Ramdao"
+  },
+  "homepage": "https://github.com/Ramdao/Claude-mod-themes",
+  "repository": "https://github.com/Ramdao/Claude-mod-themes",
+  "license": "MIT",
   "types": "./types/index.d.ts"
 }

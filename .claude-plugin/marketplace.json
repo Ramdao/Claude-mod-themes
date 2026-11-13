@@ -1,10 +1,11 @@
 {
   "name": "claude-mod-themes",
-  "owner": { "name": "Ramdao" },
+  "description": "Terminal stats panes, a spend guard, themes and a stats band for Claude Code.",
+  "owner": { "name": "Ramdao", "url": "https://github.com/Ramdao" },
   "plugins": [
-    { "name": "tool-histogram", "source": "./tool-histogram", "description": "/nerd opens a stats pane: tool usage bars, a text pie of tool share, tool-duration columns, token and per-turn trend charts." },
-    { "name": "nerd-theme", "source": "./nerd-theme", "description": "/skin switches the color scheme (cyan, amber, magenta, mono) shared by every nerd mod; also color-codes tool rows by status." },
-    { "name": "nerd-band", "source": "./nerd-band", "description": "A quiet monospace stats row above the prompt: uptime, turns, tool calls, last turn time." },
+    { "name": "tool-histogram", "source": "./tool-histogram", "description": "/nerd stats pane with a text pie, activity heatmap and charts; /nerd history, /nerd export and /budget (spend limit, context and slow-tool warnings)." },
+    { "name": "nerd-theme", "source": "./nerd-theme", "description": "/skin switches between nine color themes (or random) shared by every nerd mod; adds duration and +/- cards under tool rows." },
+    { "name": "nerd-band", "source": "./nerd-band", "description": "A stats row above the prompt: uptime, turns, tool calls, cost, context, a per-turn trend and your top tool." },
     { "name": "failure-log", "source": "./failure-log", "description": "/fails opens a pane collecting failed or denied tool calls so errors do not scroll away." },
     { "name": "file-tracker", "source": "./file-tracker", "description": "/files opens a pane listing every file Claude edited or wrote this session, with edit counts." }
   ]

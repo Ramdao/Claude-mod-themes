@@ -2,5 +2,12 @@
   "name": "failure-log",
   "version": "0.1.0",
   "description": "/fails opens a pane collecting failed or denied tool calls so errors do not scroll away.",
+  "author": {
+    "name": "Ramdao",
+    "url": "https://github.com/Ramdao"
+  },
+  "homepage": "https://github.com/Ramdao/Claude-mod-themes",
+  "repository": "https://github.com/Ramdao/Claude-mod-themes",
+  "license": "MIT",
   "types": "./types/index.d.ts"
 }
