@@ -49,6 +49,9 @@ const BUCKETS: [number, string][] = [
 const COL_ROWS = 6 // column chart height in rows (8 levels per row)
 const COL_GAP = 1
 
+// Cut a label to w cells, ending in an ellipsis when it was shortened.
+const clip = (s: string, w: number): string => (s.length > w ? s.slice(0, Math.max(1, w - 1)) + '…' : s)
+
 const center = (s: string, w: number): string => {
   const left = Math.max(0, Math.floor((w - s.length) / 2))
 
@@ -222,7 +225,7 @@ export const register: Register = on => {
     }
     const top = list.slice(0, STYLE.maxRows)
     const peak = Math.max(1, ...top.map(c => c.count))
-    const label = Math.max(4, ...top.map(c => c.tool.length))
+    const label = Math.min(14, Math.max(4, ...top.map(c => c.tool.length)))
     const barMax = Math.max(6, Math.min(STYLE.maxBar, W - label - 14))
     const total = list.reduce((n, c) => n + c.count, 0)
     const failed = list.reduce((n, c) => n + c.failed, 0)
@@ -275,14 +278,14 @@ export const register: Register = on => {
     const share = top.slice(0, 5).map((c, i) => ({ name: c.tool, n: c.count, color: palette[i] ?? t.dim }))
     const rest = total - share.reduce((n, s) => n + s.n, 0)
     if (rest > 0) share.push({ name: 'other', n: rest, color: palette[5] ?? t.dim })
-    const shareLabel = Math.max(4, ...share.map(s => s.name.length))
+    const shareLabel = Math.max(6, Math.min(14, W - 33, Math.max(4, ...share.map(s => s.name.length))))
     const rows = total > 0 ? pieRows(share.map(s => ({ frac: s.n / total, color: s.color })), STYLE.pie) : []
     const runProps = (r: Run) => ({ ...(r.fg ? { color: r.fg } : {}), ...(r.bg ? { backgroundColor: r.bg } : {}) })
 
     return (
       <Box flexDirection="column">
         <Text color={t.accent}>$ nerd --stats</Text>
-        {usageErr !== '' && <Text color={t.bad}>{`usage unavailable: ${usageErr}`}</Text>}
+        {usageErr !== '' && <Text color={t.bad}>{clip(`usage unavailable: ${usageErr}`, W)}</Text>}
 
         {heading('session')}
         <Text>
@@ -305,7 +308,7 @@ export const register: Register = on => {
           <Box flexDirection="column">
             {top.map(c => (
               <Text>
-                <Text color={t.value}>{c.tool.padEnd(label)} </Text>
+                <Text color={t.value}>{clip(c.tool, label).padEnd(label)} </Text>
                 <Text color={t.accent}>{STYLE.bar.repeat(Math.max(1, Math.round((c.count / peak) * barMax))).padEnd(barMax)}</Text>
                 <Text>{` ${String(c.count).padStart(3)}`}</Text>
                 <Text dimColor>{` ${pct(c.count, total)}`}</Text>
@@ -315,7 +318,7 @@ export const register: Register = on => {
             <Text dimColor>slowest avg</Text>
             {slow.map(c => (
               <Text>
-                <Text color={t.value}>{c.tool.padEnd(label)} </Text>
+                <Text color={t.value}>{clip(c.tool, label).padEnd(label)} </Text>
                 <Text color={t.warn}>{dur(c.totalMs / c.count).padStart(7)}</Text>
                 <Text dimColor>{`  max ${dur(c.maxMs)}`}</Text>
               </Text>
@@ -342,7 +345,7 @@ export const register: Register = on => {
               {share.map(s => (
                 <Text>
                   <Text color={s.color}>■ </Text>
-                  <Text>{s.name.padEnd(shareLabel)}</Text>
+                  <Text>{clip(s.name, shareLabel).padEnd(shareLabel)}</Text>
                   <Text>{` ${String(s.n).padStart(3)}`}</Text>
                   <Text dimColor>{` ${pct(s.n, total)}`}</Text>
                 </Text>
@@ -373,7 +376,7 @@ export const register: Register = on => {
               ))}
             </Text>
             <Text dimColor>
-              {hist.map(bucket => center(bucket.name, colW) + ' '.repeat(COL_GAP)).join('')}
+              {hist.map(bucket => center(clip(bucket.name, colW), colW) + ' '.repeat(COL_GAP)).join('')}
             </Text>
           </Box>
         )}

@@ -37,6 +37,9 @@ const loadTheme = async ($: any) => {
   }
 }
 
+// Fit a path to w cells, dropping the front (the filename matters most).
+const fit = (s: string, w: number): string => (s.length > w ? '…' + s.slice(-Math.max(1, w - 1)) : s)
+
 const short = (p: string) => {
   const parts = p.split(/[\\/]/).filter(Boolean)
   return parts.length > 3 ? '\u2026/' + parts.slice(-3).join('/') : parts.join('/')
@@ -100,6 +103,8 @@ export const register: Register = on => {
     }
 
     const total = list.reduce((n, f) => n + f.edits + f.writes, 0)
+    const cols: number = (e as any).props?.bodyColumns ?? 40
+    const pathW = Math.max(12, cols - 9) // 'M ' + ' ×99' + margin
 
     return (
       <Box flexDirection="column">
@@ -109,7 +114,7 @@ export const register: Register = on => {
             <Text color={f.writes > 0 && f.edits === 0 ? t.warn : t.value}>
               {f.writes > 0 && f.edits === 0 ? 'A ' : 'M '}
             </Text>
-            <Text>{short(f.path)}</Text>
+            <Text>{fit(short(f.path), pathW)}</Text>
             <Text dimColor>{` \u00D7${f.edits + f.writes}`}</Text>
           </Text>
         ))}
