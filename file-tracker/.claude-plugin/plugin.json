@@ -1,0 +1,6 @@
+{
+  "name": "file-tracker",
+  "version": "0.1.0",
+  "description": "/files opens a pane listing every file Claude edited or wrote this session, with edit counts.",
+  "types": "./types/index.d.ts"
+}

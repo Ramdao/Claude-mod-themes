@@ -1,0 +1,6 @@
+{
+  "name": "nerd-band",
+  "version": "0.1.0",
+  "description": "A quiet monospace stats row above the prompt: uptime, turns, tool calls, last turn time.",
+  "types": "./types/index.d.ts"
+}

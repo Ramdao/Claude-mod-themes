@@ -1,0 +1,6 @@
+{
+  "name": "failure-log",
+  "version": "0.1.0",
+  "description": "/fails opens a pane collecting failed or denied tool calls so errors do not scroll away.",
+  "types": "./types/index.d.ts"
+}

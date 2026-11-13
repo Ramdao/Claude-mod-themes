@@ -1,0 +1,6 @@
+{
+  "name": "tool-histogram",
+  "version": "0.1.0",
+  "description": "/nerd opens a stats pane: tool usage bars, a text pie of tool share, tool-duration columns, token and per-turn trend charts.",
+  "types": "./types/index.d.ts"
+}

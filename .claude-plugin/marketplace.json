@@ -1,0 +1,11 @@
+{
+  "name": "claude-mod-themes",
+  "owner": { "name": "Ramdao" },
+  "plugins": [
+    { "name": "tool-histogram", "source": "./tool-histogram", "description": "/nerd opens a stats pane: tool usage bars, a text pie of tool share, tool-duration columns, token and per-turn trend charts." },
+    { "name": "nerd-theme", "source": "./nerd-theme", "description": "/skin switches the color scheme (cyan, amber, magenta, mono) shared by every nerd mod; also color-codes tool rows by status." },
+    { "name": "nerd-band", "source": "./nerd-band", "description": "A quiet monospace stats row above the prompt: uptime, turns, tool calls, last turn time." },
+    { "name": "failure-log", "source": "./failure-log", "description": "/fails opens a pane collecting failed or denied tool calls so errors do not scroll away." },
+    { "name": "file-tracker", "source": "./file-tracker", "description": "/files opens a pane listing every file Claude edited or wrote this session, with edit counts." }
+  ]
+}
